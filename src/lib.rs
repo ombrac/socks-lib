@@ -1,3 +1,5 @@
+pub mod socks5;
+
 use std::future::Future;
 use std::io::Result;
 
