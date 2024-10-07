@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 bytes = { version = "1", default-features = false }
 tokio = { version = "1", features = ["io-util"], default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
