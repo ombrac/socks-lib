@@ -10,7 +10,7 @@ cargo run --example transparent
 ## Usage
 ```toml
 [dependencies]
-socks = { git = "https://github.com/ombrac/socks.git" }
+socks-lib = { version = "*" }
 ```
 
 ## Protocol Specification
