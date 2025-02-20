@@ -7,8 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
-use socks::socks5::{Address, Method, Request, Response, UdpPacket};
-use socks::{Streamable, ToBytes};
+use socks_lib::socks5::{Address, Method, Request, Response, UdpPacket};
+use socks_lib::{Streamable, ToBytes};
 
 struct Socks5Server();
 
