@@ -4,13 +4,13 @@ SOCKS Protocol Library in Rust
 ## Example
 SOCKS5 simple server
 ```shell
-cargo run --example transparent
+cargo run --example connect
 ```
 
 ## Usage
 ```toml
 [dependencies]
-socks-lib = { version = "*" }
+socks-lib = { version = "0.1" }
 ```
 
 ## Protocol Specification

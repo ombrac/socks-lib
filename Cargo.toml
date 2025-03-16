@@ -10,7 +10,7 @@ repository = "https://github.com/ombrac/socks-lib"
 
 [dependencies]
 bytes = { version = "1", default-features = false }
-tokio = { version = "1", features = ["io-util"], default-features = false }
+tokio = { version = "1", features = ["io-util", "net"], default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
