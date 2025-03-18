@@ -12,18 +12,20 @@ async fn main() {
         tokio::spawn(async move {
             println!("Accpet {:?}", request);
 
-            match request {
-                Request::Connect(target) => {
+            match &request {
+                Request::Connect(addr) => {
                     stream
                         .write_response(&Response::Success(Address::unspecified()))
                         .await
                         .unwrap();
 
-                    let mut target = TcpStream::connect(target.as_str()).await.unwrap();
+                    let mut target = TcpStream::connect(addr.as_str()).await.unwrap();
 
-                    utils::copy_bidirectional(&mut stream, &mut target)
+                    let (a_to_b, b_to_a) = utils::copy_bidirectional(&mut stream, &mut target)
                         .await
                         .unwrap();
+
+                    println!("{:?} Send: {}, Receive: {}", request, a_to_b, b_to_a)
                 }
 
                 _ => {

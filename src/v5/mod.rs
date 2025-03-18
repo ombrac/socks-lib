@@ -100,7 +100,7 @@ impl Request {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Invalid request command: {}", command),
-                ))
+                ));
             }
         };
 

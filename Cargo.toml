@@ -1,7 +1,7 @@
 [package]
 name = "socks-lib"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A library compliant with the SOCKS protocol standard"
 keywords = ["socks", "proxy", "firewall"]
 license = "Apache-2.0"

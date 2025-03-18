@@ -27,7 +27,10 @@ impl Server {
     #[inline]
     pub async fn accept(
         &self,
-    ) -> io::Result<(Request, Stream<impl AsyncRead + AsyncWrite + Unpin>)> {
+    ) -> io::Result<(
+        Request,
+        Stream<impl AsyncRead + AsyncWrite + Unpin + 'static>,
+    )> {
         let (inner, from) = self.listener.accept().await?;
         let inner = BufReader::new(inner);
         let mut stream = Stream::with(Self::VERSION_5, from, inner);
