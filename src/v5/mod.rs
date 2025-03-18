@@ -562,3 +562,434 @@ mod async_impl {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    mod test_request {
+        use crate::v5::{Address, Request};
+
+        use bytes::{BufMut, BytesMut};
+        use std::io::Cursor;
+        use tokio::io::BufReader;
+
+        #[tokio::test]
+        async fn test_request_from_async_read_connect_ipv4() {
+            let mut buffer = BytesMut::new();
+
+            // Command + Reserved
+            buffer.put_u8(Request::SOCKS5_CMD_CONNECT);
+            buffer.put_u8(0x00); // Reserved
+
+            // Address type + Address + Port
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV4);
+            buffer.put_slice(&[192, 168, 1, 1]); // IP
+            buffer.put_u16(80); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let request = Request::from_async_read(&mut reader).await.unwrap();
+
+            match request {
+                Request::Connect(addr) => match addr {
+                    Address::IPv4(socket_addr) => {
+                        assert_eq!(socket_addr.ip().octets(), [192, 168, 1, 1]);
+                        assert_eq!(socket_addr.port(), 80);
+                    }
+                    _ => panic!("Should be IPv4 address"),
+                },
+                _ => panic!("Should be Connect request"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_request_from_async_read_bind_ipv6() {
+            let mut buffer = BytesMut::new();
+
+            // Command + Reserved
+            buffer.put_u8(Request::SOCKS5_CMD_BIND);
+            buffer.put_u8(0x00); // Reserved
+
+            // Address type + Address + Port
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV6);
+            buffer.put_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]); // IPv6
+            buffer.put_u16(443); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let request = Request::from_async_read(&mut reader).await.unwrap();
+
+            match request {
+                Request::Bind(addr) => match addr {
+                    Address::IPv6(socket_addr) => {
+                        assert_eq!(
+                            socket_addr.ip().octets(),
+                            [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                        );
+                        assert_eq!(socket_addr.port(), 443);
+                    }
+                    _ => panic!("Should be IPv6 address"),
+                },
+                _ => panic!("Should be Bind request"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_request_from_async_read_associate_domain() {
+            let mut buffer = BytesMut::new();
+
+            // Command + Reserved
+            buffer.put_u8(Request::SOCKS5_CMD_ASSOCIATE);
+            buffer.put_u8(0x00); // Reserved
+
+            // Address type + Address + Port
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_DOMAIN_NAME);
+            buffer.put_u8(11); // Length of domain name
+            buffer.put_slice(b"example.com"); // Domain name
+            buffer.put_u16(8080); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let request = Request::from_async_read(&mut reader).await.unwrap();
+
+            match request {
+                Request::Associate(addr) => match addr {
+                    Address::Domain(domain, port) => {
+                        assert_eq!(domain.as_bytes(), b"example.com");
+                        assert_eq!(port, 8080);
+                    }
+                    _ => panic!("Should be domain address"),
+                },
+                _ => panic!("Should be Associate request"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_request_from_async_read_invalid_command() {
+            let mut buffer = BytesMut::new();
+
+            // Invalid Command + Reserved
+            buffer.put_u8(0xFF); // Invalid command
+            buffer.put_u8(0x00); // Reserved
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let result = Request::from_async_read(&mut reader).await;
+
+            assert!(result.is_err());
+            if let Err(e) = result {
+                assert_eq!(e.kind(), std::io::ErrorKind::InvalidData);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_request_from_async_read_incomplete_data() {
+            let mut buffer = BytesMut::new();
+
+            // Command only, missing reserved byte
+            buffer.put_u8(Request::SOCKS5_CMD_CONNECT);
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let result = Request::from_async_read(&mut reader).await;
+
+            assert!(result.is_err());
+        }
+    }
+
+    mod test_address {
+        use crate::v5::{Address, Domain};
+
+        use bytes::{BufMut, Bytes, BytesMut};
+        use std::io::Cursor;
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        use tokio::io::BufReader;
+
+        #[tokio::test]
+        async fn test_address_unspecified() {
+            let unspecified = Address::unspecified();
+            match unspecified {
+                Address::IPv4(addr) => {
+                    assert_eq!(addr.ip(), &Ipv4Addr::UNSPECIFIED);
+                    assert_eq!(addr.port(), 0);
+                }
+                _ => panic!("Unspecified address should be IPv4"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_socket_addr_ipv4() {
+            let socket = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8080));
+            let address = Address::from_socket_addr(socket);
+
+            match address {
+                Address::IPv4(addr) => {
+                    assert_eq!(addr.ip().octets(), [127, 0, 0, 1]);
+                    assert_eq!(addr.port(), 8080);
+                }
+                _ => panic!("Should be IPv4 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_socket_addr_ipv6() {
+            let socket = SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+                8080,
+                0,
+                0,
+            ));
+            let address = Address::from_socket_addr(socket);
+
+            match address {
+                Address::IPv6(addr) => {
+                    assert_eq!(
+                        addr.ip().octets(),
+                        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                    );
+                    assert_eq!(addr.port(), 8080);
+                }
+                _ => panic!("Should be IPv6 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_to_bytes_ipv4() {
+            let addr = Address::IPv4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 1), 80));
+            let bytes = addr.to_bytes();
+
+            assert_eq!(bytes[0], Address::SOCKS5_ADDRESS_TYPE_IPV4);
+            assert_eq!(bytes[1..5], [192, 168, 1, 1]);
+            assert_eq!(bytes[5..7], [0, 80]); // Port 80 in big-endian
+        }
+
+        #[tokio::test]
+        async fn test_address_to_bytes_ipv6() {
+            let addr = Address::IPv6(SocketAddrV6::new(
+                Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+                443,
+                0,
+                0,
+            ));
+            let bytes = addr.to_bytes();
+
+            assert_eq!(bytes[0], Address::SOCKS5_ADDRESS_TYPE_IPV6);
+            assert_eq!(
+                bytes[1..17],
+                [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+            );
+            assert_eq!(bytes[17..19], [1, 187]); // Port 443 in big-endian
+        }
+
+        #[tokio::test]
+        async fn test_address_to_bytes_domain() {
+            let domain = Domain(Bytes::from("example.com"));
+            let addr = Address::Domain(domain, 8080);
+            let bytes = addr.to_bytes();
+
+            assert_eq!(bytes[0], Address::SOCKS5_ADDRESS_TYPE_DOMAIN_NAME);
+            assert_eq!(bytes[1], 11); // Length of "example.com"
+            assert_eq!(&bytes[2..13], b"example.com");
+            assert_eq!(bytes[13..15], [31, 144]); // Port 8080 in big-endian
+        }
+
+        #[tokio::test]
+        async fn test_address_from_bytes_ipv4() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV4);
+            buffer.put_slice(&[192, 168, 1, 1]); // IP
+            buffer.put_u16(80); // Port
+
+            let mut bytes = buffer.freeze();
+            let addr = Address::from_bytes(&mut bytes).unwrap();
+
+            match addr {
+                Address::IPv4(socket_addr) => {
+                    assert_eq!(socket_addr.ip().octets(), [192, 168, 1, 1]);
+                    assert_eq!(socket_addr.port(), 80);
+                }
+                _ => panic!("Should be IPv4 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_bytes_ipv6() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV6);
+            buffer.put_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]); // IPv6
+            buffer.put_u16(443); // Port
+
+            let mut bytes = buffer.freeze();
+            let addr = Address::from_bytes(&mut bytes).unwrap();
+
+            match addr {
+                Address::IPv6(socket_addr) => {
+                    assert_eq!(
+                        socket_addr.ip().octets(),
+                        [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                    );
+                    assert_eq!(socket_addr.port(), 443);
+                }
+                _ => panic!("Should be IPv6 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_bytes_domain() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_DOMAIN_NAME);
+            buffer.put_u8(11); // Length of domain name
+            buffer.put_slice(b"example.com"); // Domain name
+            buffer.put_u16(8080); // Port
+
+            let mut bytes = buffer.freeze();
+            let addr = Address::from_bytes(&mut bytes).unwrap();
+
+            match addr {
+                Address::Domain(domain, port) => {
+                    assert_eq!(domain.as_bytes(), b"example.com");
+                    assert_eq!(port, 8080);
+                }
+                _ => panic!("Should be domain address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_async_read_ipv4() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV4);
+            buffer.put_slice(&[192, 168, 1, 1]); // IP
+            buffer.put_u16(80); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let addr = Address::from_async_read(&mut reader).await.unwrap();
+
+            match addr {
+                Address::IPv4(socket_addr) => {
+                    assert_eq!(socket_addr.ip().octets(), [192, 168, 1, 1]);
+                    assert_eq!(socket_addr.port(), 80);
+                }
+                _ => panic!("Should be IPv4 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_async_read_ipv6() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV6);
+            buffer.put_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]); // IPv6
+            buffer.put_u16(443); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let addr = Address::from_async_read(&mut reader).await.unwrap();
+
+            match addr {
+                Address::IPv6(socket_addr) => {
+                    assert_eq!(
+                        socket_addr.ip().octets(),
+                        [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+                    );
+                    assert_eq!(socket_addr.port(), 443);
+                }
+                _ => panic!("Should be IPv6 address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_async_read_domain() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_DOMAIN_NAME);
+            buffer.put_u8(11); // Length of domain name
+            buffer.put_slice(b"example.com"); // Domain name
+            buffer.put_u16(8080); // Port
+
+            let bytes = buffer.freeze();
+            let mut cursor = Cursor::new(bytes);
+            let mut reader = BufReader::new(&mut cursor);
+
+            let addr = Address::from_async_read(&mut reader).await.unwrap();
+
+            match addr {
+                Address::Domain(domain, port) => {
+                    assert_eq!(domain.as_bytes(), b"example.com");
+                    assert_eq!(port, 8080);
+                }
+                _ => panic!("Should be domain address"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_address_from_bytes_invalid_type() {
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(0xFF); // Invalid address type
+
+            let mut bytes = buffer.freeze();
+            let result = Address::from_bytes(&mut bytes);
+
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn test_address_from_bytes_insufficient_data() {
+            // IPv4 with incomplete data
+            let mut buffer = BytesMut::new();
+            buffer.put_u8(Address::SOCKS5_ADDRESS_TYPE_IPV4);
+            buffer.put_slice(&[192, 168]); // Incomplete IP
+
+            let mut bytes = buffer.freeze();
+            let result = Address::from_bytes(&mut bytes);
+
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn test_address_port() {
+            let addr1 = Address::IPv4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8080));
+            assert_eq!(addr1.port(), 8080);
+
+            let addr2 = Address::IPv6(SocketAddrV6::new(
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+                443,
+                0,
+                0,
+            ));
+            assert_eq!(addr2.port(), 443);
+
+            let addr3 = Address::Domain(Domain(Bytes::from("example.com")), 80);
+            assert_eq!(addr3.port(), 80);
+        }
+
+        #[tokio::test]
+        async fn test_address_as_str() {
+            let addr1 = Address::IPv4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8080));
+            assert_eq!(addr1.as_str(), "127.0.0.1:8080");
+
+            let addr2 = Address::IPv6(SocketAddrV6::new(
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+                443,
+                0,
+                0,
+            ));
+            assert_eq!(addr2.as_str(), "[::1]:443");
+
+            // This test assumes Domain::domain_str() returns Ok with the domain string
+            let addr3 = Address::Domain(Domain(Bytes::from("example.com")), 80);
+            assert_eq!(addr3.as_str(), "example.com:80");
+        }
+    }
+}
