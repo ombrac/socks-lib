@@ -61,7 +61,7 @@ impl Method {
 
 /// # Request
 ///
-/// ```
+/// ```text
 ///  +-----+-------+------+----------+----------+
 ///  | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
 ///  +-----+-------+------+----------+----------+
@@ -471,8 +471,32 @@ pub struct UdpPacket {
 }
 
 impl UdpPacket {
-    pub fn from_bytes<B: Buf>(_buf: &mut B) -> io::Result<Self> {
-        todo!()
+    pub fn from_bytes<B: Buf>(buf: &mut B) -> io::Result<Self> {
+        if buf.remaining() < 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Insufficient data for RSV",
+            ));
+        }
+        buf.advance(2);
+
+        if buf.remaining() < 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Insufficient data for FRAG",
+            ));
+        }
+        let frag = buf.get_u8();
+
+        let address = Address::from_bytes(buf)?;
+
+        let data = buf.copy_to_bytes(buf.remaining());
+
+        Ok(Self {
+            frag,
+            address,
+            data,
+        })
     }
 
     pub fn to_bytes(&self) -> Bytes {

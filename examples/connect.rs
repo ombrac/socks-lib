@@ -45,6 +45,7 @@ mod utils {
 
     const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
+    #[inline]
     async fn copy_with_abort<R, W>(
         read: &mut R,
         write: &mut W,
