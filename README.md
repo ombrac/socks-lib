@@ -2,9 +2,14 @@
 SOCKS Protocol Library in Rust
 
 ## Example
-SOCKS5 simple server
+SOCKS5 Connect Server
 ```shell
-cargo run --example transparent
+cargo run --example connect
+```
+
+SOCKS5 UDP Associate Server
+```shell 
+cargo run --example associate
 ```
 
 ## Usage
