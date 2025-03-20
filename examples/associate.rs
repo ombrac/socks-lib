@@ -68,7 +68,7 @@ mod utils {
         };
 
         socket
-            .send_to(&packet.data, packet.address.as_str())
+            .send_to(&packet.data, packet.address.format_as_string().unwrap())
             .await?;
 
         Ok(())

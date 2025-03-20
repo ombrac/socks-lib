@@ -28,10 +28,6 @@ pub enum Method {
 }
 
 impl Method {
-    // pub async fn from_async_read<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {}
-    // pub fn from_bytes<B: Buf>(buf: &mut B) -> io::Result<Self> {}
-    // pub fn to_bytes() {}
-
     #[rustfmt::skip]
     #[inline]
     fn as_u8(&self) -> u8 {
@@ -332,13 +328,11 @@ impl Address {
     }
 
     #[inline]
-    pub fn as_str(&self) -> String {
+    pub fn format_as_string(&self) -> io::Result<String> {
         match self {
-            Self::IPv4(addr) => addr.to_string(),
-            Self::IPv6(addr) => addr.to_string(),
-            Self::Domain(domain, port) => {
-                format!("{}:{}", domain.domain_str().unwrap().to_string(), port)
-            }
+            Self::IPv4(addr) => Ok(addr.to_string()),
+            Self::IPv6(addr) => Ok(addr.to_string()),
+            Self::Domain(domain, port) => Ok(format!("{}:{}", domain.domain_str()?, port)),
         }
     }
 }
@@ -999,9 +993,9 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_address_as_str() {
+        async fn test_address_format_as_string() {
             let addr1 = Address::IPv4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8080));
-            assert_eq!(addr1.as_str(), "127.0.0.1:8080");
+            assert_eq!(addr1.format_as_string().unwrap(), "127.0.0.1:8080");
 
             let addr2 = Address::IPv6(SocketAddrV6::new(
                 Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
@@ -1009,11 +1003,11 @@ mod tests {
                 0,
                 0,
             ));
-            assert_eq!(addr2.as_str(), "[::1]:443");
+            assert_eq!(addr2.format_as_string().unwrap(), "[::1]:443");
 
             // This test assumes Domain::domain_str() returns Ok with the domain string
             let addr3 = Address::Domain(Domain(Bytes::from("example.com")), 80);
-            assert_eq!(addr3.as_str(), "example.com:80");
+            assert_eq!(addr3.format_as_string().unwrap(), "example.com:80");
         }
     }
 }

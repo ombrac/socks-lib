@@ -19,7 +19,9 @@ async fn main() {
                         .await
                         .unwrap();
 
-                    let mut target = TcpStream::connect(addr.as_str()).await.unwrap();
+                    let mut target = TcpStream::connect(addr.format_as_string().unwrap())
+                        .await
+                        .unwrap();
 
                     let (a_to_b, b_to_a) = utils::copy_bidirectional(&mut stream, &mut target)
                         .await
