@@ -15,7 +15,7 @@ cargo run --example associate
 ## Usage
 ```toml
 [dependencies]
-socks-lib = { version = "0.1" }
+socks-lib = { version = "*" }
 ```
 
 ## Protocol Specification
