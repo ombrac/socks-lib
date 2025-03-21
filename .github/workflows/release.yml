@@ -36,5 +36,5 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Publish ombrac-client
+      - name: Publish
         run: cargo publish
