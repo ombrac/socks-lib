@@ -332,7 +332,7 @@ impl Address {
         match self {
             Self::IPv4(addr) => Ok(addr.to_string()),
             Self::IPv6(addr) => Ok(addr.to_string()),
-            Self::Domain(domain, port) => Ok(format!("{}:{}", domain.domain_str()?, port)),
+            Self::Domain(domain, port) => Ok(format!("{}:{}", domain.format_as_str()?, port)),
         }
     }
 }
@@ -340,9 +340,27 @@ impl Address {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Domain(Bytes);
 
+impl Into<Domain> for String {
+    fn into(self) -> Domain {
+        Domain(Bytes::from(self))
+    }
+}
+
+impl Into<Domain> for &[u8] {
+    fn into(self) -> Domain {
+        Domain(Bytes::copy_from_slice(self))
+    }
+}
+
+impl Into<Domain> for &str {
+    fn into(self) -> Domain {
+        Domain(Bytes::copy_from_slice(self.as_bytes()))
+    }
+}
+
 impl Domain {
     #[inline]
-    pub fn domain_str(&self) -> io::Result<&str> {
+    pub fn format_as_str(&self) -> io::Result<&str> {
         use std::str::from_utf8;
 
         from_utf8(&self.0).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid UTF-8"))
