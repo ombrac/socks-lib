@@ -341,18 +341,21 @@ impl Address {
 pub struct Domain(Bytes);
 
 impl Into<Domain> for String {
+    #[inline]
     fn into(self) -> Domain {
         Domain(Bytes::from(self))
     }
 }
 
 impl Into<Domain> for &[u8] {
+    #[inline]
     fn into(self) -> Domain {
         Domain(Bytes::copy_from_slice(self))
     }
 }
 
 impl Into<Domain> for &str {
+    #[inline]
     fn into(self) -> Domain {
         Domain(Bytes::copy_from_slice(self.as_bytes()))
     }
@@ -374,6 +377,16 @@ impl Domain {
     #[inline]
     pub fn to_bytes(self) -> Bytes {
         self.0
+    }
+
+    #[inline]
+    pub fn from_bytes(bytes: Bytes) -> Self {
+        Self(bytes)
+    }
+
+    #[inline]
+    pub fn from_string(string: String) -> Self {
+        string.into()
     }
 }
 
@@ -595,6 +608,36 @@ mod async_impl {
             cx: &mut Context<'_>,
         ) -> Poll<Result<(), io::Error>> {
             AsyncWrite::poll_shutdown(Pin::new(&mut self.inner.get_mut()), cx)
+        }
+    }
+}
+
+
+#[cfg(feature = "ombrac")]
+mod ombrac {
+    use super::Address;
+
+    use ombrac::address::Address as OmbracAddress;
+
+    impl Into<OmbracAddress> for Address {
+        #[inline]
+        fn into(self) -> OmbracAddress {
+            match self {
+                Self::Domain(domain, port) => OmbracAddress::Domain(domain.format_as_str().unwrap().to_string(), port),
+                Self::IPv4(addr) => OmbracAddress::IPv4(addr),
+                Self::IPv6(addr) => OmbracAddress::IPv6(addr)
+            }
+        }
+    }
+
+    impl Into<Address> for OmbracAddress{
+        #[inline]
+        fn into(self) -> Address {
+            match self {
+                Self::Domain(domain, port) => Address::Domain(domain.into(), port),
+                Self::IPv4(addr) => Address::IPv4(addr),
+                Self::IPv6(addr) => Address::IPv6(addr)
+            }
         }
     }
 }

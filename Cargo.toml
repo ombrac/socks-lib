@@ -8,9 +8,16 @@ license = "Apache-2.0"
 authors = ["Contributors"]
 repository = "https://github.com/ombrac/socks-lib"
 
+[features]
+default = []
+
+ombrac = ["dep:ombrac"]
+
 [dependencies]
 bytes = { version = "1", default-features = false }
 tokio = { version = "1", features = ["io-util", "net"], default-features = false }
+
+ombrac = { version = "0.4", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
