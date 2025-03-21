@@ -612,7 +612,6 @@ mod async_impl {
     }
 }
 
-
 #[cfg(feature = "ombrac")]
 mod ombrac {
     use super::Address;
@@ -623,20 +622,22 @@ mod ombrac {
         #[inline]
         fn into(self) -> OmbracAddress {
             match self {
-                Self::Domain(domain, port) => OmbracAddress::Domain(domain.format_as_str().unwrap().to_string(), port),
+                Self::Domain(domain, port) => {
+                    OmbracAddress::Domain(domain.format_as_str().unwrap().to_string(), port)
+                }
                 Self::IPv4(addr) => OmbracAddress::IPv4(addr),
-                Self::IPv6(addr) => OmbracAddress::IPv6(addr)
+                Self::IPv6(addr) => OmbracAddress::IPv6(addr),
             }
         }
     }
 
-    impl Into<Address> for OmbracAddress{
+    impl Into<Address> for OmbracAddress {
         #[inline]
         fn into(self) -> Address {
             match self {
                 Self::Domain(domain, port) => Address::Domain(domain.into(), port),
                 Self::IPv4(addr) => Address::IPv4(addr),
-                Self::IPv6(addr) => Address::IPv6(addr)
+                Self::IPv6(addr) => Address::IPv6(addr),
             }
         }
     }
