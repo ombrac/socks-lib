@@ -163,9 +163,7 @@ impl Address {
         }
     }
 
-    pub async fn from_async_read<R: AsyncRead + Unpin>(
-        reader: &mut BufReader<R>,
-    ) -> io::Result<Self> {
+    pub async fn from_async_read<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
         let address_type = reader.read_u8().await?;
 
         match address_type {
@@ -614,30 +612,43 @@ mod async_impl {
 
 #[cfg(feature = "ombrac")]
 mod ombrac {
-    use super::Address;
+    use super::{Address, Domain};
 
     use ombrac::address::Address as OmbracAddress;
+    use ombrac::address::Domain as OmbracDomain;
 
-    impl Into<OmbracAddress> for Address {
+    impl From<OmbracDomain> for Domain {
         #[inline]
-        fn into(self) -> OmbracAddress {
-            match self {
-                Self::Domain(domain, port) => {
-                    OmbracAddress::Domain(domain.format_as_str().unwrap().to_string(), port)
-                }
-                Self::IPv4(addr) => OmbracAddress::IPv4(addr),
-                Self::IPv6(addr) => OmbracAddress::IPv6(addr),
+        fn from(value: OmbracDomain) -> Self {
+            Self(value.to_bytes())
+        }
+    }
+
+    impl From<Domain> for OmbracDomain {
+        #[inline]
+        fn from(value: Domain) -> Self {
+            Self::from_bytes(value.to_bytes())
+        }
+    }
+
+    impl From<OmbracAddress> for Address {
+        #[inline]
+        fn from(value: OmbracAddress) -> Self {
+            match value {
+                OmbracAddress::Domain(doamin, port) => Self::Domain(doamin.into(), port),
+                OmbracAddress::IPv4(addr) => Self::IPv4(addr),
+                OmbracAddress::IPv6(addr) => Self::IPv6(addr),
             }
         }
     }
 
-    impl Into<Address> for OmbracAddress {
+    impl From<Address> for OmbracAddress {
         #[inline]
-        fn into(self) -> Address {
-            match self {
-                Self::Domain(domain, port) => Address::Domain(domain.into(), port),
-                Self::IPv4(addr) => Address::IPv4(addr),
-                Self::IPv6(addr) => Address::IPv6(addr),
+        fn from(value: Address) -> Self {
+            match value {
+                Address::Domain(domain, port) => OmbracAddress::Domain(domain.into(), port),
+                Address::IPv4(addr) => OmbracAddress::IPv4(addr),
+                Address::IPv6(addr) => OmbracAddress::IPv6(addr),
             }
         }
     }
