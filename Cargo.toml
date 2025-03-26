@@ -17,7 +17,7 @@ ombrac = ["dep:ombrac"]
 bytes = { version = "1", default-features = false }
 tokio = { version = "1", features = ["io-util", "net"], default-features = false }
 
-ombrac = { version = "0.4", default-features = false, optional = true }
+ombrac = { version = "0.5", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
