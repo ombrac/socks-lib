@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::LazyLock;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// # Method
 ///
@@ -80,9 +80,7 @@ impl Request {
 }
 
 impl Request {
-    pub async fn from_async_read<R: AsyncRead + Unpin>(
-        reader: &mut BufReader<R>,
-    ) -> io::Result<Self> {
+    pub async fn from_async_read<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
         let mut buf = [0u8; 2];
         reader.read_exact(&mut buf).await?;
 
@@ -163,9 +161,7 @@ impl Address {
         }
     }
 
-    pub async fn from_async_read<R: AsyncRead + Unpin>(
-        reader: &mut BufReader<R>,
-    ) -> io::Result<Self> {
+    pub async fn from_async_read<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
         let address_type = reader.read_u8().await?;
 
         match address_type {
@@ -340,24 +336,21 @@ impl Address {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Domain(Bytes);
 
-impl Into<Domain> for String {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::from(self))
+impl From<String> for Domain {
+    fn from(value: String) -> Self {
+        Domain(Bytes::from(value))
     }
 }
 
-impl Into<Domain> for &[u8] {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::copy_from_slice(self))
+impl From<&[u8]> for Domain {
+    fn from(value: &[u8]) -> Self {
+        Domain(Bytes::copy_from_slice(value))
     }
 }
 
-impl Into<Domain> for &str {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::copy_from_slice(self.as_bytes()))
+impl From<&str> for Domain {
+    fn from(value: &str) -> Self {
+        Domain(Bytes::copy_from_slice(value.as_bytes()))
     }
 }
 
@@ -546,19 +539,16 @@ impl UdpPacket {
     }
 }
 
-pub struct Stream<T> {
-    version: u8,
-    from: SocketAddr,
-    inner: BufReader<T>,
-}
+pub struct Stream<T>(T);
 
 impl<T> Stream<T> {
+    #[inline]
     pub fn version(&self) -> u8 {
-        self.version
+        0x05
     }
 
-    pub fn from_addr(&self) -> SocketAddr {
-        self.from
+    pub fn with(inner: T) -> Self {
+        Self(inner)
     }
 }
 
@@ -580,7 +570,7 @@ mod async_impl {
             cx: &mut Context<'_>,
             buf: &mut tokio::io::ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
-            AsyncRead::poll_read(Pin::new(&mut self.inner.get_mut()), cx, buf)
+            AsyncRead::poll_read(Pin::new(&mut self.0), cx, buf)
         }
     }
 
@@ -593,51 +583,64 @@ mod async_impl {
             cx: &mut Context<'_>,
             buf: &[u8],
         ) -> Poll<Result<usize, io::Error>> {
-            AsyncWrite::poll_write(Pin::new(&mut self.inner.get_mut()), cx, buf)
+            AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf)
         }
 
         fn poll_flush(
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Result<(), io::Error>> {
-            AsyncWrite::poll_flush(Pin::new(&mut self.inner.get_mut()), cx)
+            AsyncWrite::poll_flush(Pin::new(&mut self.0), cx)
         }
 
         fn poll_shutdown(
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Result<(), io::Error>> {
-            AsyncWrite::poll_shutdown(Pin::new(&mut self.inner.get_mut()), cx)
+            AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx)
         }
     }
 }
 
 #[cfg(feature = "ombrac")]
 mod ombrac {
-    use super::Address;
+    use super::{Address, Domain};
 
     use ombrac::address::Address as OmbracAddress;
+    use ombrac::address::Domain as OmbracDomain;
 
-    impl Into<OmbracAddress> for Address {
+    impl From<OmbracDomain> for Domain {
         #[inline]
-        fn into(self) -> OmbracAddress {
-            match self {
-                Self::Domain(domain, port) => {
-                    OmbracAddress::Domain(domain.format_as_str().unwrap().to_string(), port)
-                }
-                Self::IPv4(addr) => OmbracAddress::IPv4(addr),
-                Self::IPv6(addr) => OmbracAddress::IPv6(addr),
+        fn from(value: OmbracDomain) -> Self {
+            Self(value.to_bytes())
+        }
+    }
+
+    impl From<Domain> for OmbracDomain {
+        #[inline]
+        fn from(value: Domain) -> Self {
+            Self::from_bytes(value.to_bytes())
+        }
+    }
+
+    impl From<OmbracAddress> for Address {
+        #[inline]
+        fn from(value: OmbracAddress) -> Self {
+            match value {
+                OmbracAddress::Domain(doamin, port) => Self::Domain(doamin.into(), port),
+                OmbracAddress::IPv4(addr) => Self::IPv4(addr),
+                OmbracAddress::IPv6(addr) => Self::IPv6(addr),
             }
         }
     }
 
-    impl Into<Address> for OmbracAddress {
+    impl From<Address> for OmbracAddress {
         #[inline]
-        fn into(self) -> Address {
-            match self {
-                Self::Domain(domain, port) => Address::Domain(domain.into(), port),
-                Self::IPv4(addr) => Address::IPv4(addr),
-                Self::IPv6(addr) => Address::IPv6(addr),
+        fn from(value: Address) -> Self {
+            match value {
+                Address::Domain(domain, port) => OmbracAddress::Domain(domain.into(), port),
+                Address::IPv4(addr) => OmbracAddress::IPv4(addr),
+                Address::IPv6(addr) => OmbracAddress::IPv6(addr),
             }
         }
     }
