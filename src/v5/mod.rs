@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::LazyLock;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// # Method
 ///
@@ -80,9 +80,7 @@ impl Request {
 }
 
 impl Request {
-    pub async fn from_async_read<R: AsyncRead + Unpin>(
-        reader: &mut BufReader<R>,
-    ) -> io::Result<Self> {
+    pub async fn from_async_read<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Self> {
         let mut buf = [0u8; 2];
         reader.read_exact(&mut buf).await?;
 
@@ -544,19 +542,16 @@ impl UdpPacket {
     }
 }
 
-pub struct Stream<T> {
-    version: u8,
-    from: SocketAddr,
-    inner: BufReader<T>,
-}
+pub struct Stream<T>(T);
 
 impl<T> Stream<T> {
+    #[inline]
     pub fn version(&self) -> u8 {
-        self.version
+        0x05
     }
 
-    pub fn from_addr(&self) -> SocketAddr {
-        self.from
+    pub fn with(inner: T) -> Self {
+        Self(inner)
     }
 }
 
@@ -578,7 +573,7 @@ mod async_impl {
             cx: &mut Context<'_>,
             buf: &mut tokio::io::ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
-            AsyncRead::poll_read(Pin::new(&mut self.inner.get_mut()), cx, buf)
+            AsyncRead::poll_read(Pin::new(&mut self.0), cx, buf)
         }
     }
 
@@ -591,21 +586,21 @@ mod async_impl {
             cx: &mut Context<'_>,
             buf: &[u8],
         ) -> Poll<Result<usize, io::Error>> {
-            AsyncWrite::poll_write(Pin::new(&mut self.inner.get_mut()), cx, buf)
+            AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf)
         }
 
         fn poll_flush(
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Result<(), io::Error>> {
-            AsyncWrite::poll_flush(Pin::new(&mut self.inner.get_mut()), cx)
+            AsyncWrite::poll_flush(Pin::new(&mut self.0), cx)
         }
 
         fn poll_shutdown(
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Result<(), io::Error>> {
-            AsyncWrite::poll_shutdown(Pin::new(&mut self.inner.get_mut()), cx)
+            AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx)
         }
     }
 }

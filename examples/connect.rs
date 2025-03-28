@@ -1,15 +1,27 @@
-use socks_lib::v5::server::Server;
-use socks_lib::v5::{Address, Request, Response};
+use socks_lib::v5::Stream;
+use socks_lib::v5::{Address, Method, Request, Response};
+
+use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
 #[tokio::main]
 async fn main() {
-    let server = Server::bind("127.0.0.1:1080").await.unwrap();
+    let server = TcpListener::bind("127.0.0.1:1080").await.unwrap();
 
     println!("SOCKS server listening on {}", server.local_addr().unwrap());
 
-    while let Ok((request, mut stream)) = server.accept().await {
+    while let Ok((inner, _addr)) = server.accept().await {
         tokio::spawn(async move {
+            let mut stream = Stream::with(inner);
+
+            let _methods = stream.read_methods().await.unwrap();
+            stream
+                .write_auth_method(Method::NoAuthentication)
+                .await
+                .unwrap();
+
+            let request = stream.read_request().await.unwrap();
+
             println!("Accpet {:?}", request);
 
             match &request {
