@@ -336,24 +336,21 @@ impl Address {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Domain(Bytes);
 
-impl Into<Domain> for String {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::from(self))
+impl From<String> for Domain {
+    fn from(value: String) -> Self {
+        Domain(Bytes::from(value))
     }
 }
 
-impl Into<Domain> for &[u8] {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::copy_from_slice(self))
+impl From<&[u8]> for Domain {
+    fn from(value: &[u8]) -> Self {
+        Domain(Bytes::copy_from_slice(value))
     }
 }
 
-impl Into<Domain> for &str {
-    #[inline]
-    fn into(self) -> Domain {
-        Domain(Bytes::copy_from_slice(self.as_bytes()))
+impl From<&str> for Domain {
+    fn from(value: &str) -> Self {
+        Domain(Bytes::copy_from_slice(value.as_bytes()))
     }
 }
 
