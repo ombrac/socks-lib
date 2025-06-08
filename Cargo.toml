@@ -26,4 +26,4 @@ rcgen = { version = "0.13", features = ["crypto", "aws_lc_rs"], default-features
 hyper = { version = "1.6", features = ["server", "http2"], default-features = false }
 hyper-util = { version = "0.1", features = ["tokio"], default-features = false }
 http-body-util = { version = "0.1", default-features = false }
-curl = { version = "0.4", default-features = false }
+curl = { version = "0.4", features = ["ssl", "http2"], default-features = false }
