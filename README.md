@@ -12,12 +12,6 @@ SOCKS5 UDP Associate Server
 cargo run --example associate
 ```
 
-## Usage
-```toml
-[dependencies]
-socks-lib = { version = "*" }
-```
-
 ## Protocol Specification
 [RFC 1928: SOCKS Protocol Version 5](https://datatracker.ietf.org/doc/html/rfc1928)
 

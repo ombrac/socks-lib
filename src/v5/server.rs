@@ -1,97 +1,193 @@
 use std::io;
+use std::sync::Arc;
+use std::time::Duration;
 
-use bytes::BytesMut;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use crate::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use crate::net::TcpListener;
+use crate::v5::{Method, Request, Stream};
 
-use super::{Method, Request, Response, Stream};
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-impl<T> Stream<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    /// # Methods
-    ///
-    /// ```text
-    ///  +----+----------+----------+
-    ///  |VER | NMETHODS | METHODS  |
-    ///  +----+----------+----------+
-    ///  | 1  |    1     | 1 to 255 |
-    ///  +----+----------+----------+
-    /// ```
-    #[inline]
-    pub async fn read_methods(&mut self) -> io::Result<Vec<Method>> {
-        let mut buffer = [0u8; 2];
-        self.0.read_exact(&mut buffer).await?;
+pub struct Config<A, H> {
+    auth: A,
+    handler: H,
+    timeout: Duration,
+}
 
-        let method_num = buffer[1];
-        if method_num == 1 {
-            let method = self.0.read_u8().await?;
-            return Ok(vec![Method::from_u8(method)]);
+impl<A, H> Config<A, H> {
+    pub fn new(auth: A, handler: H) -> Self {
+        Self {
+            auth,
+            handler,
+            timeout: DEFAULT_TIMEOUT,
         }
-
-        let mut methods = vec![0u8; method_num as usize];
-        self.0.read_exact(&mut methods).await?;
-
-        let result = methods.into_iter().map(|e| Method::from_u8(e)).collect();
-
-        Ok(result)
     }
 
-    ///
-    /// ```text
-    ///  +----+--------+
-    ///  |VER | METHOD |
-    ///  +----+--------+
-    ///  | 1  |   1    |
-    ///  +----+--------+
-    ///  ```
-    #[inline]
-    pub async fn write_auth_method(&mut self, method: Method) -> io::Result<usize> {
-        let bytes = [self.version().into(), method.as_u8()];
-        self.0.write(&bytes).await
-    }
-
-    ///
-    /// ```text
-    ///  +----+-----+-------+------+----------+----------+
-    ///  |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    ///  +----+-----+-------+------+----------+----------+
-    ///  | 1  |  1  | X'00' |  1   | Variable |    2     |
-    ///  +----+-----+-------+------+----------+----------+
-    /// ```
-    ///
-    #[inline]
-    pub async fn read_request(&mut self) -> io::Result<Request> {
-        let _version = self.0.read_u8().await?;
-        Request::from_async_read(&mut self.0).await
-    }
-
-    ///
-    /// ```text
-    ///  +----+-----+-------+------+----------+----------+
-    ///  |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-    ///  +----+-----+-------+------+----------+----------+
-    ///  | 1  |  1  | X'00' |  1   | Variable |    2     |
-    ///  +----+-----+-------+------+----------+----------+
-    /// ```
-    ///
-    #[inline]
-    pub async fn write_response<'a>(&mut self, resp: &Response<'a>) -> io::Result<usize> {
-        let bytes = prepend_u8(resp.to_bytes(), self.version().into());
-        self.0.write(&bytes).await
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
-fn prepend_u8(mut bytes: BytesMut, value: u8) -> BytesMut {
-    bytes.reserve(1);
+/// SOCKS5 server implementation
+pub struct Server;
 
-    unsafe {
-        let ptr = bytes.as_mut_ptr();
-        std::ptr::copy(ptr, ptr.add(1), bytes.len());
-        std::ptr::write(ptr, value);
-        let new_len = bytes.len() + 1;
-        bytes.set_len(new_len);
+impl Server {
+    pub async fn run<H, A>(
+        listener: TcpListener,
+        config: Arc<Config<A, H>>,
+        shutdown_signal: impl Future<Output = ()>,
+    ) -> io::Result<()>
+    where
+        H: Handler + 'static,
+        A: Authenticator + 'static,
+    {
+        tokio::pin!(shutdown_signal);
+
+        loop {
+            tokio::select! {
+                // Bias select to prefer the shutdown signal if both are ready
+                biased;
+
+                _ = &mut shutdown_signal => return Ok(()),
+
+                result = listener.accept() => {
+                    let (inner, addr) = match result {
+                        Ok(res) => res,
+                        Err(_err) => {
+                            #[cfg(feature = "tracing")]
+                            tracing::error!("Failed to accept connection: {}", _err);
+                            continue;
+                        }
+                    };
+
+                    let config = config.clone();
+                    tokio::spawn(async move {
+                        let mut stream = Stream::with(inner, addr);
+
+                        if let Err(_err) = Self::handle_connection(&mut stream, &config).await {
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!("Connection {} error: {}", addr, _err);
+                        }
+                    });
+                }
+            }
+        }
     }
 
-    bytes
+    async fn handle_connection<H, A, S>(
+        stream: &mut Stream<S>,
+        config: &Config<A, H>,
+    ) -> io::Result<()>
+    where
+        H: Handler + 'static,
+        A: Authenticator + 'static,
+        S: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+    {
+        // Apply timeout to handshake phase
+        let request = tokio::time::timeout(config.timeout, async {
+            let methods = stream.read_methods().await?;
+            config.auth.auth(stream, methods).await?;
+            stream.read_request().await
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Timeout during authentication"))??;
+
+        config.handler.handle(stream, request).await
+    }
+}
+
+/// Authentication trait for SOCKS5 server
+pub trait Authenticator: Send + Sync {
+    fn auth<T>(
+        &self,
+        stream: &mut Stream<T>,
+        methods: Vec<Method>,
+    ) -> impl Future<Output = io::Result<()>> + Send
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + Sync;
+}
+
+/// Request handler trait for SOCKS5 server
+pub trait Handler: Send + Sync {
+    fn handle<T>(
+        &self,
+        stream: &mut Stream<T>,
+        request: Request,
+    ) -> impl Future<Output = io::Result<()>> + Send
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + Sync;
+}
+
+pub mod auth {
+    use super::*;
+
+    pub struct NoAuthentication;
+
+    impl Authenticator for NoAuthentication {
+        async fn auth<T>(&self, stream: &mut Stream<T>, _methods: Vec<Method>) -> io::Result<()>
+        where
+            T: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+        {
+            stream.write_auth_method(Method::NoAuthentication).await?;
+            Ok(())
+        }
+    }
+
+    pub struct UserPassword {
+        username: String,
+        password: String,
+    }
+
+    impl UserPassword {
+        pub fn new(username: String, password: String) -> Self {
+            Self { username, password }
+        }
+    }
+
+    impl Authenticator for UserPassword {
+        async fn auth<T>(&self, stream: &mut Stream<T>, methods: Vec<Method>) -> io::Result<()>
+        where
+            T: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+        {
+            if !methods.contains(&Method::UsernamePassword) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Username/Password authentication required",
+                ));
+            }
+
+            stream.write_auth_method(Method::UsernamePassword).await?;
+
+            // Read username/password subnegotiation
+            let version = stream.read_u8().await?;
+            if version != 0x01 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid subnegotiation version",
+                ));
+            }
+
+            let ulen = stream.read_u8().await?;
+            let mut username = vec![0; ulen as usize];
+            stream.read_exact(&mut username).await?;
+
+            let plen = stream.read_u8().await?;
+            let mut password = vec![0; plen as usize];
+            stream.read_exact(&mut password).await?;
+
+            // Verify credentials
+            if username != self.username.as_bytes() || password != self.password.as_bytes() {
+                stream.write_all(&[0x01, 0x01]).await?;
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Invalid username or password",
+                ));
+            }
+
+            stream.write_all(&[0x01, 0x00]).await?;
+
+            Ok(())
+        }
+    }
 }

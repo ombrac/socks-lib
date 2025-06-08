@@ -1,53 +1,54 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use socks_lib::v5::{Address, Method, Request, Response, Stream};
-use tokio::net::{TcpListener, UdpSocket};
+use socks_lib::io::{self, AsyncRead, AsyncWrite};
+use socks_lib::net::{TcpListener, UdpSocket};
+use socks_lib::v5::server::auth::NoAuthentication;
+use socks_lib::v5::server::{Config, Handler, Server};
+use socks_lib::v5::{Address, Request, Response, Stream};
 
 #[tokio::main]
 async fn main() {
-    let server = TcpListener::bind("127.0.0.1:1080").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:1082").await.unwrap();
+    println!(
+        "SOCKS server listening on {}",
+        listener.local_addr().unwrap()
+    );
 
-    println!("SOCKS server listening on {}", server.local_addr().unwrap());
+    let config = Config::new(NoAuthentication, CommandHandler);
 
-    while let Ok((inner, _addr)) = server.accept().await {
-        tokio::spawn(async move {
-            let mut stream = Stream::with(inner);
+    Server::run(listener, config.into(), async {
+        tokio::signal::ctrl_c().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
 
-            let _methods = stream.read_methods().await.unwrap();
+pub struct CommandHandler;
+
+impl Handler for CommandHandler {
+    async fn handle<T>(&self, stream: &mut Stream<T>, request: Request) -> io::Result<()>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+    {
+        if let Request::Associate(_addr) = &request {
+            let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
+            let socket_out = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
+            let bind_addr = Address::from(socket.local_addr().unwrap());
+
             stream
-                .write_auth_method(Method::NoAuthentication)
+                .write_response(&Response::Success(&bind_addr))
                 .await
                 .unwrap();
 
-            let request = stream.read_request().await.unwrap();
+            utils::copy_bidirectional(socket, socket_out, Duration::from_secs(60))
+                .await
+                .unwrap();
+        } else {
+            stream.write_response_unsupported().await?;
+        }
 
-            println!("Accpet {:?}", request);
-
-            match &request {
-                Request::Associate(_addr) => {
-                    let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
-                    let socket_out = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
-                    let bind_addr = Address::from_socket_addr(socket.local_addr().unwrap());
-
-                    stream
-                        .write_response(&Response::Success(&bind_addr))
-                        .await
-                        .unwrap();
-
-                    utils::copy_bidirectional(socket, socket_out, Duration::from_secs(60))
-                        .await
-                        .unwrap();
-                }
-
-                _ => {
-                    stream
-                        .write_response(&Response::CommandNotSupported)
-                        .await
-                        .unwrap();
-                }
-            }
-        });
+        Ok(())
     }
 }
 
@@ -77,7 +78,7 @@ mod utils {
         };
 
         socket
-            .send_to(&packet.data, packet.address.format_as_string().unwrap())
+            .send_to(&packet.data, packet.address.to_string())
             .await?;
 
         Ok(())
@@ -136,7 +137,7 @@ mod utils {
                 match timeout(idle_timeout, outbound.recv_from(&mut outbound_buf)).await {
                     Ok(Ok((n, src_addr))) => {
                         let data = Bytes::copy_from_slice(&outbound_buf[..n]);
-                        let packet = UdpPacket::un_frag(Address::from_socket_addr(src_addr), data);
+                        let packet = UdpPacket::un_frag(Address::from(src_addr), data);
 
                         inbound.send_to(&packet.to_bytes(), client_addr).await?;
                     }

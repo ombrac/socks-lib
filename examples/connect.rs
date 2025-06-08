@@ -1,55 +1,54 @@
-use socks_lib::v5::Stream;
-use socks_lib::v5::{Address, Method, Request, Response};
-
-use tokio::net::TcpListener;
-use tokio::net::TcpStream;
+use socks_lib::io::{self, AsyncRead, AsyncWrite};
+use socks_lib::net::{TcpListener, TcpStream};
+use socks_lib::v5::server::auth::UserPassword;
+use socks_lib::v5::server::{Config, Handler, Server};
+use socks_lib::v5::{Request, Stream};
 
 #[tokio::main]
 async fn main() {
-    let server = TcpListener::bind("127.0.0.1:1080").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:1081").await.unwrap();
+    println!(
+        "SOCKS server listening on {}",
+        listener.local_addr().unwrap()
+    );
 
-    println!("SOCKS server listening on {}", server.local_addr().unwrap());
+    let config = Config::new(
+        UserPassword::new("username".into(), "password".into()),
+        CommandHandler,
+    );
 
-    while let Ok((inner, _addr)) = server.accept().await {
-        tokio::spawn(async move {
-            let mut stream = Stream::with(inner);
+    Server::run(listener, config.into(), async {
+        tokio::signal::ctrl_c().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
 
-            let _methods = stream.read_methods().await.unwrap();
-            stream
-                .write_auth_method(Method::NoAuthentication)
-                .await
-                .unwrap();
+pub struct CommandHandler;
 
-            let request = stream.read_request().await.unwrap();
+impl Handler for CommandHandler {
+    async fn handle<T>(&self, stream: &mut Stream<T>, request: Request) -> io::Result<()>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+    {
+        if let Request::Connect(addr) = &request {
+            stream.write_response_unspecified().await?;
 
-            println!("Accpet {:?}", request);
+            let mut target = TcpStream::connect(addr.to_string()).await?;
+            let copy = utils::copy_bidirectional(stream, &mut target).await?;
 
-            match &request {
-                Request::Connect(addr) => {
-                    stream
-                        .write_response(&Response::Success(Address::unspecified()))
-                        .await
-                        .unwrap();
+            println!(
+                "{} {:?} Send: {}, Receive: {}",
+                stream.peer_addr(),
+                request,
+                copy.0,
+                copy.1
+            );
+        } else {
+            stream.write_response_unsupported().await?;
+        }
 
-                    let mut target = TcpStream::connect(addr.format_as_string().unwrap())
-                        .await
-                        .unwrap();
-
-                    let (a_to_b, b_to_a) = utils::copy_bidirectional(&mut stream, &mut target)
-                        .await
-                        .unwrap();
-
-                    println!("{:?} Send: {}, Receive: {}", request, a_to_b, b_to_a)
-                }
-
-                _ => {
-                    stream
-                        .write_response(&Response::CommandNotSupported)
-                        .await
-                        .unwrap();
-                }
-            }
-        });
+        Ok(())
     }
 }
 
