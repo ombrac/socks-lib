@@ -179,6 +179,45 @@ pub mod mock {
 
             Self(address, task)
         }
+
+        pub async fn http2_with_data(data: Bytes) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+
+            let tls_config = load_rustls_config();
+            let tls_acceptor = TlsAcceptor::from(tls_config);
+
+            let shared_data = Arc::new(data);
+
+            let task = tokio::spawn(async move {
+                loop {
+                    let (stream, _peer_addr) = listener.accept().await.unwrap();
+                    let tls_acceptor = tls_acceptor.clone();
+
+                    let data_for_connection = shared_data.clone();
+
+                    tokio::spawn(async move {
+                        let stream = match tls_acceptor.accept(stream).await {
+                            Ok(s) => s,
+                            Err(_) => return,
+                        };
+                        let io = TokioIo::new(stream);
+
+                        let service = service_fn(move |_: Request<hyper::body::Incoming>| {
+                            let response_body = data_for_connection.as_ref().clone();
+
+                            async move { Ok::<_, Infallible>(Response::new(Full::new(response_body))) }
+                        });
+
+                        let _ = http2::Builder::new(TokioExecutor::new())
+                            .serve_connection(io, service)
+                            .await;
+                    });
+                }
+            });
+
+            Self(address, task)
+        }
     }
 
     pub const HELLO_WORLD: &[u8; 13] = b"Hello, World!";
