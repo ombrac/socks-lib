@@ -359,6 +359,20 @@ impl Domain {
     }
 }
 
+impl From<Domain> for Bytes {
+    #[inline]
+    fn from(value: Domain) -> Self {
+        value.0
+    }
+}
+
+impl From<Domain> for Vec<u8> {
+    #[inline]
+    fn from(value: Domain) -> Self {
+        value.0.to_vec()
+    }
+}
+
 impl TryFrom<&[u8]> for Domain {
     type Error = io::Error;
 
